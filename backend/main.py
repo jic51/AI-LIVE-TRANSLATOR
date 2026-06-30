@@ -1,3 +1,4 @@
+from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -7,7 +8,13 @@ import os
 import translator
 import vibevoice_tts
 
-app = FastAPI(title="AI Live Translator")
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    translator.ensure_models()
+    yield
+
+app = FastAPI(title="AI Live Translator", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,

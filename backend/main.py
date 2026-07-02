@@ -45,8 +45,9 @@ class TtsRequest(BaseModel):
 def health():
     return {
         "status": "ok",
-        "vibevoice_available": vibevoice_tts.is_available(),
+        "translation_provider": translator.active_provider(),
         "models_ready": translator.models_ready(),
+        "vibevoice_available": vibevoice_tts.is_available(),
     }
 
 

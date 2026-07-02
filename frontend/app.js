@@ -18,8 +18,13 @@ let segmentCount = 0;
 
 // For phrase-boundary detection during interim results
 let interimBuffer = '';
-let phraseTimer = null;
+let phraseTimer = null;       // debounce for preview translation (resets on each word)
+let chunkTimer = null;        // force-commit every N seconds of continuous speech
+let lastCommittedText = '';   // avoid translating the same text twice
 let recognition = null;
+
+const CHUNK_INTERVAL_MS = 2500;  // force translation every 2.5s of unbroken speech
+const PREVIEW_DEBOUNCE_MS = 350; // preview after 350ms of silence in interim
 
 /* ─── DOM ────────────────────────────────────────────────────────────────── */
 const $ = id => document.getElementById(id);
@@ -234,12 +239,16 @@ function buildRecognition() {
     for (let i = e.resultIndex; i < e.results.length; i++) {
       const t = e.results[i][0].transcript;
       if (e.results[i].isFinal) {
-        // Final result from browser = natural sentence boundary
+        // Final result = browser detected a natural sentence boundary
         clearTimeout(phraseTimer);
+        clearTimeout(chunkTimer);
+        chunkTimer = null;
+        const text = (interimBuffer + ' ' + t).trim();
         interimBuffer = '';
+        lastCommittedText = text;
         $('interim-original').textContent = '';
         $('interim-translated').textContent = '';
-        commitPhrase(t);
+        commitPhrase(text);
       } else {
         interim += t;
       }
@@ -249,21 +258,41 @@ function buildRecognition() {
       interimBuffer = interim;
       $('interim-original').textContent = interim;
 
-      // Show interim translation preview (low priority, cancel if new arrives)
+      // Preview translation: fires 350ms after the last word (resets on each new word)
       clearTimeout(phraseTimer);
       phraseTimer = setTimeout(async () => {
         if (!interimBuffer.trim()) return;
         const preview = await translateText(interimBuffer, true);
         if (preview) $('interim-translated').textContent = preview;
-      }, 500);
+      }, PREVIEW_DEBOUNCE_MS);
 
-      // If interim ends with sentence punctuation, commit it immediately
+      // Punctuation boundary → commit immediately
       if (BOUNDARY_RE.test(interim.trim())) {
         clearTimeout(phraseTimer);
+        clearTimeout(chunkTimer);
+        chunkTimer = null;
+        const text = interim.trim();
         interimBuffer = '';
+        lastCommittedText = text;
         $('interim-original').textContent = '';
         $('interim-translated').textContent = '';
-        commitPhrase(interim.trim());
+        commitPhrase(text);
+        return;
+      }
+
+      // Force-commit every CHUNK_INTERVAL_MS of continuous speech
+      // (handles long unbroken sentences where browser delays isFinal)
+      if (!chunkTimer) {
+        chunkTimer = setTimeout(() => {
+          chunkTimer = null;
+          const text = interimBuffer.trim();
+          if (!text || text === lastCommittedText) return;
+          lastCommittedText = text;
+          interimBuffer = '';
+          $('interim-original').textContent = '';
+          $('interim-translated').textContent = '';
+          commitPhrase(text);
+        }, CHUNK_INTERVAL_MS);
       }
     }
   };
@@ -310,6 +339,8 @@ function stopMic() {
   recognition?.stop();
   setMicState(false);
   clearTimeout(phraseTimer);
+  clearTimeout(chunkTimer);
+  chunkTimer = null;
   // NOTE: audio queue is NOT cleared — translation keeps playing after mic stops
 }
 
